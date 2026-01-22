@@ -33,8 +33,10 @@ function set_time_text()
 	local total_minutes = math.floor(cur_seconds / 60)
 	local minutes       = math.floor(total_minutes % 60)
 	local hours         = math.floor(total_minutes / 60)
-	-- local text          = string.format("%02d:%02d:%02d", hours, minutes, seconds)
 	local text          = string.format("%02d:%02d", minutes, seconds)
+	if hours > 0 then 
+		text = string.format("%02d:%02d:%02d", hours, minutes, seconds)
+	end
 
 	if cur_seconds < 1 then
 		text = stop_text
@@ -167,9 +169,9 @@ end
 
 -- A function named script_defaults will be called to set the default settings
 function script_defaults(settings)
-	obs.obs_data_set_default_int(settings, "hour", 18)
+	obs.obs_data_set_default_int(settings, "hour", 20)
 	obs.obs_data_set_default_int(settings, "minute", 0)
-	obs.obs_data_set_default_string(settings, "stop_text", "Starting soon (tm)")
+	obs.obs_data_set_default_string(settings, "stop_text", "Starting soon...")
 end
 
 -- A function named script_save will be called when the script is saved
