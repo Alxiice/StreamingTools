@@ -1,0 +1,10 @@
+{
+  "title_file": "E:\\Documents\\STREAM\\Apps\\WizeBot\\files\\iryiel\\songrequest\\sr_cs_title.txt",
+  "viewer_file": "E:\\Documents\\STREAM\\Apps\\WizeBot\\files\\iryiel\\songrequest\\sr_cs_viewername.txt",
+  "port": 8000,
+  "show_debug": false,
+  "width": 1000,
+  "opacity": 100,
+  "dark": false,
+  "template_file": "E:\\Documents\\STREAM\\StreamingTools\\OBS\\nowplaying\\nowplaying_template.html"
+}

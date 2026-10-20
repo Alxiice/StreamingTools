@@ -1,0 +1,3 @@
+# SRNowPlaying
+
+This tool displays 

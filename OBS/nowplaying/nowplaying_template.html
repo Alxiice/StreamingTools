@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<!--
+  LARGE-TEXT variant: all text sizes scale with the source height (vh), so it stays readable when the overlay is small on stream.
+  Template for the Now Playing overlay (edited freely, then refresh the OBS source cache).
+  The Python app serves these endpoints to this page:
+    /song         current song text      /config.json  width, opacity, dark, show_debug
+    /requester    viewer name            POST /log     send a line to the app's log
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Now Playing</title>
+<style>
+  /* ===== CONFIG: edit these two lines ===== */
+  /* (see the CONFIG block in the <script> below) */
+
+  :root {
+    --ink: #f5f1ff;
+    --ink-dim: rgba(245, 241, 255, .68);
+    --glass: rgba(20, 16, 32, .62);
+    --accent: #ff7ab8;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: transparent; overflow: hidden; }
+  body {
+    font-family: "Sora", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    padding: 0;
+  }
+
+  .card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    width: var(--w, 1000px);
+    max-width: 100vw;
+    height: 100vh;
+    padding: 18px 22px;
+    border-radius: 26px;
+    overflow: hidden;
+    isolation: isolate;
+    opacity: 0;
+    transform: translateX(-40px);
+    transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1);
+  }
+  .card.show { opacity: 1; transform: none; }
+  .card.swap { opacity: 0; transform: translateX(40px); }
+
+  /* blurred album art as the backdrop */
+  .bg {
+    position: absolute; inset: -40px; z-index: -1;
+    background-size: cover; background-position: center;
+    filter: blur(38px) saturate(1.4) brightness(.55);
+    transform: scale(1.2);
+    transition: background-image .4s;
+    background-color: #1b1730;
+    opacity: var(--op, 1);
+  }
+  body.dark .bg { background-image: none !important; background-color: #151515; filter: none; transform: none; }
+  body.dark .who { background: rgba(255,255,255,.14); }
+  .sub { display: flex; align-items: center; gap: 24px; margin-top: 1vh; }
+  .sub .clip { flex: 1; min-width: 0; }
+
+  .art {
+    flex: none;
+    width: calc(100vh - 36px); height: calc(100vh - 36px);
+    border-radius: 18px;
+    background: rgba(255,255,255,.08) center / cover no-repeat;
+    box-shadow: 0 14px 30px rgba(0,0,0,.45);
+  }
+
+  .meta { min-width: 0; flex: 1; }
+  .title {
+    font-size: 28vh; font-weight: 800; line-height: 1.2;
+    letter-spacing: -.01em;
+  }
+  .artist { font-size: 20vh; font-weight: 600; line-height: 1.25; color: rgba(245, 241, 255, .88); }
+
+  /* single-line text that scrolls only when it overflows */
+  .clip { overflow: hidden; white-space: nowrap; }
+  .clip > span { display: inline-block; }
+  .clip.scroll > span { padding-right: 60px; animation: slide var(--dur, 12s) linear infinite; }
+  @keyframes slide { to { transform: translateX(-50%); } }
+
+  .who {
+    display: inline-flex; 
+    align-items: center; gap: 2vh;
+    flex: 0 1 auto; 
+    min-width: 0; 
+    max-width: 64%; 
+    margin-left: auto; 
+    margin-top: 50px; 
+    padding: 1.4vh 5vh 1.4vh 5vh;
+    border-radius: 999px;
+    background: rgba(255,255,255,.2);
+    font-size: 13vh; font-weight: 700;
+  }
+  .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who i {
+    flex: none; 
+    width: 4vh; height: 4vh; 
+    border-radius: 50%;
+    margin-right: 5px;
+    background: var(--accent);
+    box-shadow: 0 0 0 2vh rgba(255,122,184,.3);
+  }
+  .who.hidden { display: none; }
+
+  .debug {
+    position: fixed; left: 8px; bottom: 8px; right: 8px;
+    font: 12px/1.4 Consolas, monospace; color: #fff;
+    background: rgba(0,0,0,.75); padding: 8px 10px; border-radius: 8px;
+    white-space: pre-wrap; display: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card { transition: none; }
+    .clip.scroll > span { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="card" id="card">
+  <div class="bg" id="bg"></div>
+  <div class="art" id="art"></div>
+  <div class="meta">
+    <div class="clip" id="titleClip"><span class="title" id="title"></span></div>
+    <div class="sub">
+      <div class="clip" id="artistClip"><span class="artist" id="artist"></span></div>
+      <div class="who hidden" id="who"><i></i><span id="whoName"></span></div>
+    </div>
+  </div>
+</div>
+<div class="debug" id="debug"></div>
+
+<script>
+/* ================= CONFIG ================= */
+const CONFIG = {
+  // Paths to the files your song request tool writes.
+  // Relative paths work if you keep this HTML next to them; otherwise use
+  // full paths like "file:///C:/Users/you/Documents/song.txt"
+  songFile:      "/song",
+  requesterFile: "/requester",
+
+  debug: false,         // controlled from the Python app
+  pollMs: 2000,          // how often to check for a new song
+  hideWhenEmpty: true,   // hide the card when the song file is empty
+  requesterPrefix: ""
+};
+/* ========================================== */
+
+const $ = id => document.getElementById(id);
+const log = {};
+const sent = {};
+function sendLog(m) { try { fetch("/log", { method: "POST", body: m }).catch(() => {}); } catch (e) {} }
+function dbg(key, msg) {
+  if (key === "lookup" && sent[key] !== msg) { sent[key] = msg; sendLog(msg); }
+  if (!CONFIG.debug) return;
+  log[key] = msg;
+  const d = $("debug");
+  d.style.display = "block";
+  d.textContent = Object.entries(log).map(([k, v]) => k + ": " + v).join("\n");
+}
+dbg("page", location.href);
+const card = $("card");
+let lastSong = null, lastWho = null, token = 0;
+
+// Read a local/remote text file (XHR works from OBS browser sources, even for local files)
+function readText(path) {
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest();
+    x.open("GET", path + (path.includes("?") ? "&" : "?") + "t=" + Date.now(), true);
+    x.onload = () => {
+      if (x.status >= 400) { dbg(path, "file not found - check the path in the Python app"); resolve(""); return; }
+      const t = (x.responseText || "").trim();
+      dbg(path, "read OK (status " + x.status + ") -> \"" + t.slice(0, 80) + "\"");
+      resolve(t);
+    };
+    x.onerror = () => { dbg(path, "BLOCKED or not found (can't read this file from here)"); resolve(""); };
+    try { x.send(); } catch (e) { dbg(path, "ERROR " + e.message); resolve(""); }
+  });
+}
+
+// Remove "(Official Video)", "[Lyrics]", "ft. ..." noise so the lookup matches better
+function clean(s) {
+  return s
+    .replace(/[\(\[][^\)\]]*(official|lyric|video|audio|visuali[sz]er|hd|4k|remaster)[^\)\]]*[\)\]]/gi, "")
+    .replace(/\s+/g, " ").trim();
+}
+
+// Look up artist / album / cover art. iTunes Search needs no API key.
+async function lookup(raw) {
+  const query = clean(raw).replace(/\s+-\s+/g, " ");
+  try {
+    const r = await fetch("https://itunes.apple.com/search?media=music&entity=song&limit=1&term=" + encodeURIComponent(query));
+    const j = await r.json();
+    const t = j.results && j.results[0];
+    dbg("lookup", t ? "found " + t.artistName + " - " + t.trackName : "no match");
+    if (!t) return null;
+    return {
+      title: t.trackName,
+      artist: t.artistName,
+      album: t.collectionName,
+      art: (t.artworkUrl100 || "").replace("100x100bb", "600x600bb")
+    };
+  } catch (e) { dbg("lookup", "FAILED " + e.message); return null; }
+}
+
+// Fallback when nothing is found: split "Artist - Title" if present
+function guess(raw) {
+  const c = clean(raw);
+  const m = c.split(/\s+-\s+/);
+  return m.length >= 2
+    ? { title: m.slice(1).join(" - "), artist: m[0], album: "", art: "" }
+    : { title: c, artist: "", album: "", art: "" };
+}
+
+// Turn a one-line field into a marquee only if it doesn't fit
+function fit(clipEl, textEl, text) {
+  clipEl.classList.remove("scroll");
+  textEl.textContent = text;
+  if (textEl.scrollWidth > clipEl.clientWidth + 2) {
+    textEl.textContent = text + "\u00A0\u00A0\u00A0\u00A0\u00A0" + text; // duplicate for a seamless loop
+    clipEl.style.setProperty("--dur", Math.max(8, text.length * 0.35) + "s");
+    clipEl.classList.add("scroll");
+  }
+}
+
+let current = null, styleKey = "";
+function refit() {
+  if (!current) return;
+  fit($("titleClip"), $("title"), current.title);
+  fit($("artistClip"), $("artist"), current.artist);
+}
+function applyStyle(c) {
+  const r = document.documentElement.style;
+  r.setProperty("--w", c.width + "px");
+  r.setProperty("--op", c.opacity / 100);
+  document.body.classList.toggle("dark", !!c.dark);
+  if (styleKey !== String(c.width)) { styleKey = String(c.width); setTimeout(refit, 80); }
+}
+
+function render(info, who) {
+  $("art").style.backgroundImage = info.art ? `url("${info.art}")` : "none";
+  $("bg").style.backgroundImage  = info.art ? `url("${info.art}")` : "none";
+  $("artistClip").style.display = info.artist ? "" : "none";
+  $("whoName").textContent = CONFIG.requesterPrefix + who;
+  $("who").classList.toggle("hidden", !who);
+  card.classList.remove("swap");
+  card.classList.add("show");
+  current = info;
+  fit($("titleClip"), $("title"), info.title);
+  fit($("artistClip"), $("artist"), info.artist);
+}
+
+async function tick() {
+  try {
+    const c = await (await fetch("/config.json?t=" + Date.now())).json();
+    CONFIG.debug = !!c.show_debug;
+    if (!CONFIG.debug) $("debug").style.display = "none";
+    applyStyle(c);
+  } catch (e) {}
+  const [song, who] = await Promise.all([readText(CONFIG.songFile), readText(CONFIG.requesterFile)]);
+  if (song === lastSong && who === lastWho) return;
+
+  const myToken = ++token;
+  lastSong = song; lastWho = who;
+
+  if (!song) {
+    if (CONFIG.hideWhenEmpty) card.classList.remove("show");
+    return;
+  }
+
+  const info = (await lookup(song)) || guess(song);
+  if (myToken !== token) return; // a newer song arrived while we were looking this one up
+
+  // preload cover so it doesn't pop in
+  if (info.art) await new Promise(r => { const i = new Image(); i.onload = i.onerror = r; i.src = info.art; });
+
+  if (card.classList.contains("show")) {
+    card.classList.add("swap");
+    card.classList.remove("show");
+    setTimeout(() => { if (myToken === token) render(info, who); }, 450);
+  } else {
+    render(info, who);
+  }
+}
+
+sendLog("Overlay page loaded");
+tick();
+setInterval(tick, CONFIG.pollMs);
+</script>
+</body>
+</html>
