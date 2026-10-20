@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+
+<style>
+body{
+    margin:0;
+    overflow:hidden;
+    background:transparent;
+}
+
+#container{
+    width:100%;
+    white-space:nowrap;
+    overflow:hidden;
+}
+
+#text{
+    display:inline-block;
+    padding-left:100%;
+    font-size:36px;
+    color:white;
+    font-family:Arial, sans-serif;
+    animation: scroll 20s linear infinite;
+}
+
+@keyframes scroll{
+from { transform: translateX(0); }
+to { transform: translateX(-100%); }
+}
+</style>
+
+</head>
+
+<body>
+
+<div id="container">
+<div id="text">Loading song...</div>
+</div>
+
+<script>
+
+const fs = require("fs");
+
+const filePath = "E:/Documents/STREAM/Apps/WizeBot/files/iryiel/songrequest/sr_cs_title.txt";
+
+function loadText(){
+    try{
+        const text = fs.readFileSync(filePath, "utf8");
+        document.getElementById("text").textContent = text;
+    }
+    catch(err){
+        console.log(err);
+    }
+}
+
+loadText();
+setInterval(loadText,2000);
+
+</script>
+
+</body>
+</html>
