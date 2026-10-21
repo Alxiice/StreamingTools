@@ -4,7 +4,8 @@
   "port": 8000,
   "show_debug": false,
   "width": 1000,
-  "opacity": 100,
-  "dark": false,
-  "template_file": "E:\\Documents\\STREAM\\StreamingTools\\OBS\\nowplaying\\nowplaying_template.html"
+  "opacity": 71,
+  "dark": true,
+  "template_file": "E:\\Documents\\STREAM\\StreamingTools\\OBS\\nowplaying\\nowplaying_template.html",
+  "gui_dark": true
 }
